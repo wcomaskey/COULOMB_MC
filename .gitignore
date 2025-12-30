@@ -1,0 +1,150 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+venv_*/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Legacy code and old scripts
+COULOMB_LET/
+DPASS2106/
+legacy/
+
+# Old standalone scripts (superseded by coulomb_mc package)
+Coulomb_Multiple.py
+Kinetic_Energy.py
+LET.py
+PDF.py
+Rotate_vector.py
+Rotation.py
+Stopping_Power_Heavy-Ion11.py
+plot_all_paths.py
+plot_path.py
+test2.py
+
+# Old/redundant documentation
+CODE_EXTRACTION_GUIDE.md
+GET_STARTED.md
+IMPLEMENTATION_ANALYSIS.md
+INSTALL_INSTRUCTIONS.md
+INSTALL_STATUS.md
+README_NEW.md
+SUMMARY.md
+WEEK1_ACTION_PLAN.md
+QUICK_START_IMPLEMENTATION.md
+
+# Internal planning and upload docs (not needed in public repo)
+GITHUB_UPLOAD_PLAN.md
+PUSH_TO_GITHUB.md
+GITHUB_READY_SUMMARY.md
+QUICK_GITHUB_UPLOAD.md
+COMMIT_CLEANED.md
+ADAPTIVE_STEPPING_SUMMARY.md
+WEEK2_COMPLETE.md
+WEEK2_SUMMARY.md
+NEXT_STEPS_OPTIMIZATION.md
+OPTIMIZATION_SESSION_SUMMARY.md
+QUICK_START_OPTIMIZATIONS.md
+
+# Build artifacts
+*.o
+*.mod
+*.exe
+*.out
+x64/
+.vs/
+
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Test coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Profiling
+*.prof
+*.lprof
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Large output files
+*.png
+*.jpg
+*.pdf
+*.dat
+*.DAT
+
+# Exceptions: Keep critical data files
+!data/nist/*.DAT
+!data/nist/*.npy
+!data/nist/*.dat
+
+# Exceptions: Keep key documentation images if any
+!docs/images/*.png
+!README_images/*.png
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.ico
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
