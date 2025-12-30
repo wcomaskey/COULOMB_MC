@@ -306,6 +306,45 @@ def calculate_adaptive_step_size(energy_MeV_u: float, A: float, Z: float,
     return step
 
 
+def _transport_particle_worker(work_item):
+    """
+    Worker function for parallel particle transport.
+
+    This is a module-level function so it can be pickled by multiprocessing.
+
+    Parameters:
+        work_item: Dictionary with particle state and engine parameters
+
+    Returns:
+        Tuple of (final_particle, dose_contributions)
+    """
+    # Extract parameters
+    particle_id = work_item['particle_id']
+    max_depth = work_item['max_depth']
+    material = work_item['material']
+    density = work_item['density']
+    X0 = work_item['X0']
+    max_energy_loss_fraction = work_item['max_energy_loss_fraction']
+
+    # Create a local engine instance for this process
+    # Each process gets its own stopping power data
+    engine = TransportEngine(material=material,
+                            max_energy_loss_fraction=max_energy_loss_fraction)
+
+    # Create initial state
+    initial_state = {
+        'position': work_item['position'],
+        'direction': work_item['direction'],
+        'energy': work_item['energy'],
+        'A': work_item['A'],
+        'Z': work_item['Z'],
+        'weight': work_item['weight']
+    }
+
+    # Transport this particle
+    return engine._transport_single_particle(particle_id, initial_state, max_depth)
+
+
 class TransportEngine:
     """
     Main transport engine for Monte Carlo simulation.
@@ -705,28 +744,30 @@ class TransportEngine:
             print(f"  Density: {self.density} g/cm³")
             print(f"  Max depth: {max_depth} cm")
 
-        # Prepare initial states
-        initial_states = []
+        # Prepare initial states with engine parameters
+        work_items = []
         for i in range(n_particles):
-            initial_states.append({
+            work_items.append({
+                'particle_id': i,
                 'position': beam.particles['position'][i].copy(),
                 'direction': beam.particles['direction'][i].copy(),
                 'energy': beam.particles['energy'][i],
                 'A': beam.particles['A'][i],
                 'Z': beam.particles['Z'][i],
-                'weight': beam.particles['weight'][i]
+                'weight': beam.particles['weight'][i],
+                'max_depth': max_depth,
+                'material': self.material,
+                'density': self.density,
+                'X0': self.X0,
+                'max_energy_loss_fraction': self.max_energy_loss_fraction,
+                'dose_bins': self.dose_bins
             })
-
-        # Create worker function
-        def worker(args):
-            particle_id, state = args
-            return self._transport_single_particle(particle_id, state, max_depth)
 
         # Parallel execution
         start_time = time.time()
 
         with mp.Pool(n_processes) as pool:
-            results = pool.map(worker, enumerate(initial_states))
+            results = pool.map(_transport_particle_worker, work_items)
 
         elapsed = time.time() - start_time
 
