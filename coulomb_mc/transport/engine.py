@@ -594,6 +594,174 @@ class TransportEngine:
             if 0 <= bin_indices[i] < self.n_bins:
                 self.dose_deposit[bin_indices[i]] += energy_deposited[i] * weights[i]
 
+    def _transport_single_particle(self, particle_id: int, initial_state: dict,
+                                   max_depth: float) -> Tuple[np.ndarray, list]:
+        """
+        Transport a single particle from initialization to death.
+
+        This function is designed for parallel execution - each particle is
+        transported independently without synchronization.
+
+        Parameters:
+            particle_id: Particle identifier
+            initial_state: Initial particle state dict with keys:
+                          position, direction, energy, A, Z, weight
+            max_depth: Maximum depth cutoff [cm]
+
+        Returns:
+            final_particle: Final particle state (1-element array)
+            dose_contributions: List of dose deposition events
+        """
+        # Create single particle array
+        particle = np.zeros(1, dtype=PARTICLE_DTYPE)
+        particle['alive'][0] = True
+        particle['position'][0] = initial_state['position']
+        particle['direction'][0] = initial_state['direction']
+        particle['energy'][0] = initial_state['energy']
+        particle['A'][0] = initial_state['A']
+        particle['Z'][0] = initial_state['Z']
+        particle['weight'][0] = initial_state['weight']
+
+        dose_contributions = []
+        step_count = 0
+
+        while particle['alive'][0] and particle['position'][0, 2] < max_depth:
+            # Get current state
+            energy = particle['energy'][0]
+            A = particle['A'][0]
+            Z = particle['Z'][0]
+            position = particle['position'][0].copy()
+
+            # Calculate stopping power
+            sp = self.stopping_power.stopping_power_MeV_cm2_g(energy, A, Z)
+
+            # Calculate remaining range
+            remaining_range = self.stopping_power.range_g_cm2(energy, A, Z) / self.density
+
+            # Calculate adaptive step size
+            step = calculate_adaptive_step_size(
+                energy, A, Z, sp, remaining_range, self.density,
+                self.max_energy_loss_fraction, range_fraction_limit=0.05
+            )
+
+            # Calculate energy loss
+            dEdx = sp * self.density  # MeV/cm
+            energy_loss_total = dEdx * step  # MeV
+            energy_loss_per_u = energy_loss_total / A  # MeV/u
+
+            # Calculate scattering angle
+            theta_rms = highland_angle(energy, Z, A, step, self.X0)
+
+            # Record dose contribution (before step)
+            dose_contributions.append({
+                'position': position.copy(),
+                'depth': position[2],
+                'energy_deposited': energy_loss_total,
+                'step_length': step,
+                'weight': particle['weight'][0]
+            })
+
+            # Advance particle
+            transport_step_with_scattering_adaptive(
+                particle,
+                np.array([step]),
+                np.array([energy_loss_per_u]),
+                np.array([theta_rms])
+            )
+
+            step_count += 1
+
+        return particle, dose_contributions
+
+    def transport_parallel(self, beam: ParticleArray, max_depth: float = 50.0,
+                          n_processes: int = None, verbose: bool = True) -> dict:
+        """
+        Transport particles in parallel using multiprocessing.
+
+        This implements particle-level parallelization where each particle
+        is transported independently from birth to death. No synchronization
+        is required during transport - only at the end for dose accumulation.
+
+        Parameters:
+            beam: ParticleArray with initial particle states
+            max_depth: Maximum depth to transport [cm]
+            n_processes: Number of parallel processes (default: cpu_count)
+            verbose: Print progress information
+
+        Returns:
+            Dictionary with transport statistics
+        """
+        import multiprocessing as mp
+        import time
+
+        if n_processes is None:
+            n_processes = mp.cpu_count()
+
+        n_particles = len(beam.particles)
+
+        if verbose:
+            print(f"\nParallel transport: {n_particles} particles on {n_processes} cores")
+            print(f"  Material: {self.material}")
+            print(f"  Density: {self.density} g/cm³")
+            print(f"  Max depth: {max_depth} cm")
+
+        # Prepare initial states
+        initial_states = []
+        for i in range(n_particles):
+            initial_states.append({
+                'position': beam.particles['position'][i].copy(),
+                'direction': beam.particles['direction'][i].copy(),
+                'energy': beam.particles['energy'][i],
+                'A': beam.particles['A'][i],
+                'Z': beam.particles['Z'][i],
+                'weight': beam.particles['weight'][i]
+            })
+
+        # Create worker function
+        def worker(args):
+            particle_id, state = args
+            return self._transport_single_particle(particle_id, state, max_depth)
+
+        # Parallel execution
+        start_time = time.time()
+
+        with mp.Pool(n_processes) as pool:
+            results = pool.map(worker, enumerate(initial_states))
+
+        elapsed = time.time() - start_time
+
+        # Accumulate dose from all particles
+        total_steps = 0
+        for particle_state, dose_list in results:
+            total_steps += len(dose_list)
+            for dose_event in dose_list:
+                # Find bin index using midpoint depth
+                z_mid = dose_event['depth'] + 0.5 * dose_event['step_length']
+                bin_idx = np.digitize([z_mid], self.dose_bins)[0] - 1
+
+                if 0 <= bin_idx < self.n_bins:
+                    self.dose_deposit[bin_idx] += dose_event['energy_deposited'] * dose_event['weight']
+
+        # Update beam with final states
+        for i, (final_particle, _) in enumerate(results):
+            beam.particles[i] = final_particle[0]
+
+        if verbose:
+            rate = n_particles / elapsed
+            print(f"\nTransport complete:")
+            print(f"  Time: {elapsed:.1f}s")
+            print(f"  Rate: {rate:.0f} particles/sec")
+            print(f"  Total steps: {total_steps:,}")
+            print(f"  Steps/particle: {total_steps/n_particles:.1f}")
+
+        return {
+            'n_particles': n_particles,
+            'n_alive': np.sum(beam.particles['alive']),
+            'total_steps': total_steps,
+            'elapsed_time': elapsed,
+            'particles_per_sec': rate
+        }
+
     def get_dose_depth(self, normalize: bool = True, smooth: int = 0) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get depth-dose distribution.
