@@ -1,4 +1,4 @@
-# COULOMB_LET - Monte Carlo Radiation Transport Code
+# COULOMB_MC - Monte Carlo Radiation Transport Code
 
 High-performance 3D Monte Carlo simulation for heavy-ion radiation transport in matter.
 
@@ -7,7 +7,7 @@ High-performance 3D Monte Carlo simulation for heavy-ion radiation transport in 
 
 ## Overview
 
-COULOMB_LET is a Python-based Monte Carlo radiation transport code for simulating heavy-ion interactions in matter. It tracks individual particle trajectories through materials, accounting for:
+COULOMB_MC is a Python-based Monte Carlo radiation transport code for simulating heavy-ion interactions in matter. It tracks individual particle trajectories through materials, accounting for:
 
 - Energy loss (stopping power from NIST PSTAR/ASTAR data)
 - Multiple Coulomb scattering (Highland/Molière theory)
