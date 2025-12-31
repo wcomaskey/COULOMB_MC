@@ -47,7 +47,7 @@ def test_parallel_correctness():
     depth_parallel, dose_parallel = engine.get_dose_depth(normalize=True)
 
     print(f"\nResults:")
-    print(f"  Serial:   {time_serial:.2f}s ({stats_serial['total_steps']:,} steps)")
+    print(f"  Serial:   {time_serial:.2f}s ({stats_serial['n_steps']:,} steps)")
     print(f"  Parallel: {time_parallel:.2f}s ({stats_parallel['total_steps']:,} steps)")
     print(f"  Speedup:  {time_serial/time_parallel:.2f}x")
 
