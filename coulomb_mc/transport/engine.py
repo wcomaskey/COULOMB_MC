@@ -315,37 +315,56 @@ def _init_worker(material, max_energy_loss_fraction):
     _worker_engine = TransportEngine(material=material,
                                      max_energy_loss_fraction=max_energy_loss_fraction)
 
-def _transport_particle_worker(work_item):
+def _transport_chunk_worker(work_item):
     """
-    Worker function for parallel particle transport.
+    Worker function for parallel transport of particle chunks.
 
-    Uses a global engine instance created once per worker process
-    to avoid repeatedly loading NIST data.
+    Transports a subset of particles using vectorized serial algorithm.
+    This is much more efficient than transporting particles one-by-one.
 
     Parameters:
-        work_item: Dictionary with particle state
+        work_item: Dictionary containing:
+            - particle_data: numpy structured array with particle states
+            - max_depth: maximum transport depth
+            - n_bins: number of dose bins
+            - dose_bins: bin edges
 
     Returns:
-        Tuple of (final_particle, dose_contributions)
+        Dictionary with final states and dose contributions
     """
     global _worker_engine
 
-    # Extract parameters
-    particle_id = work_item['particle_id']
+    if _worker_engine is None:
+        raise RuntimeError("Worker engine not initialized!")
+
+    # Extract work item data
+    particle_data = work_item['particle_data']
     max_depth = work_item['max_depth']
 
-    # Create initial state
-    initial_state = {
-        'position': work_item['position'],
-        'direction': work_item['direction'],
-        'energy': work_item['energy'],
-        'A': work_item['A'],
-        'Z': work_item['Z'],
-        'weight': work_item['weight']
-    }
+    # Create a temporary ParticleArray-like object
+    from coulomb_mc.core.particle import ParticleArray
+    chunk_beam = ParticleArray(n_particles=len(particle_data))
+    chunk_beam.particles = particle_data.copy()
 
-    # Transport this particle using the shared engine
-    return _worker_engine._transport_single_particle(particle_id, initial_state, max_depth)
+    # Reset dose scoring for this chunk
+    dose_deposit = np.zeros(work_item['n_bins'])
+    original_dose = _worker_engine.dose_deposit.copy()
+    _worker_engine.dose_deposit[:] = 0
+
+    # Transport this chunk using vectorized serial algorithm
+    stats = _worker_engine.transport(chunk_beam, max_depth=max_depth, verbose=False)
+
+    # Get dose accumulated by this chunk
+    dose_deposit = _worker_engine.dose_deposit.copy()
+
+    # Restore original dose (don't accumulate yet)
+    _worker_engine.dose_deposit = original_dose
+
+    return {
+        'final_states': chunk_beam.particles,
+        'dose_deposit': dose_deposit,
+        'n_steps': stats['n_steps']
+    }
 
 
 class TransportEngine:
@@ -720,9 +739,9 @@ class TransportEngine:
         """
         Transport particles in parallel using multiprocessing.
 
-        This implements particle-level parallelization where each particle
-        is transported independently from birth to death. No synchronization
-        is required during transport - only at the end for dose accumulation.
+        Splits particles into chunks and transports each chunk in parallel using
+        the efficient vectorized serial algorithm. Much faster than per-particle
+        parallelization.
 
         Parameters:
             beam: ParticleArray with initial particle states
@@ -747,49 +766,54 @@ class TransportEngine:
             print(f"  Density: {self.density} g/cm³")
             print(f"  Max depth: {max_depth} cm")
 
-        # Prepare initial states with engine parameters
+        # Split particles into chunks (one per process)
+        chunk_size = (n_particles + n_processes - 1) // n_processes  # Ceiling division
         work_items = []
-        for i in range(n_particles):
+
+        for i in range(n_processes):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, n_particles)
+
+            if start_idx >= n_particles:
+                break
+
+            # Extract chunk of particles
+            chunk_particles = beam.particles[start_idx:end_idx].copy()
+
             work_items.append({
-                'particle_id': i,
-                'position': beam.particles['position'][i].copy(),
-                'direction': beam.particles['direction'][i].copy(),
-                'energy': beam.particles['energy'][i],
-                'A': beam.particles['A'][i],
-                'Z': beam.particles['Z'][i],
-                'weight': beam.particles['weight'][i],
+                'particle_data': chunk_particles,
                 'max_depth': max_depth,
-                'material': self.material,
-                'density': self.density,
-                'X0': self.X0,
-                'max_energy_loss_fraction': self.max_energy_loss_fraction,
+                'n_bins': self.n_bins,
                 'dose_bins': self.dose_bins
             })
+
+        if verbose:
+            print(f"  Split into {len(work_items)} chunks of ~{chunk_size} particles")
 
         # Parallel execution
         start_time = time.time()
 
         with mp.Pool(n_processes, initializer=_init_worker,
                      initargs=(self.material, self.max_energy_loss_fraction)) as pool:
-            results = pool.map(_transport_particle_worker, work_items)
+            results = pool.map(_transport_chunk_worker, work_items)
 
         elapsed = time.time() - start_time
 
-        # Accumulate dose from all particles
+        # Accumulate results from all chunks
         total_steps = 0
-        for particle_state, dose_list in results:
-            total_steps += len(dose_list)
-            for dose_event in dose_list:
-                # Find bin index using midpoint depth
-                z_mid = dose_event['depth'] + 0.5 * dose_event['step_length']
-                bin_idx = np.digitize([z_mid], self.dose_bins)[0] - 1
+        particle_idx = 0
 
-                if 0 <= bin_idx < self.n_bins:
-                    self.dose_deposit[bin_idx] += dose_event['energy_deposited'] * dose_event['weight']
+        for result in results:
+            # Accumulate dose
+            self.dose_deposit += result['dose_deposit']
 
-        # Update beam with final states
-        for i, (final_particle, _) in enumerate(results):
-            beam.particles[i] = final_particle[0]
+            # Update beam with final states
+            chunk_size_actual = len(result['final_states'])
+            beam.particles[particle_idx:particle_idx + chunk_size_actual] = result['final_states']
+            particle_idx += chunk_size_actual
+
+            # Accumulate steps
+            total_steps += result['n_steps']
 
         # Calculate rate
         rate = n_particles / elapsed
@@ -799,12 +823,11 @@ class TransportEngine:
             print(f"  Time: {elapsed:.1f}s")
             print(f"  Rate: {rate:.0f} particles/sec")
             print(f"  Total steps: {total_steps:,}")
-            print(f"  Steps/particle: {total_steps/n_particles:.1f}")
 
         return {
             'n_particles': n_particles,
             'n_alive': np.sum(beam.particles['alive']),
-            'total_steps': total_steps,
+            'n_steps': total_steps,  # Changed to n_steps to match serial
             'elapsed_time': elapsed,
             'particles_per_sec': rate
         }
