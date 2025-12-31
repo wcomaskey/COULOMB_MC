@@ -306,30 +306,33 @@ def calculate_adaptive_step_size(energy_MeV_u: float, A: float, Z: float,
     return step
 
 
+# Global engine instance for each worker process
+_worker_engine = None
+
+def _init_worker(material, max_energy_loss_fraction):
+    """Initialize worker process with shared engine instance."""
+    global _worker_engine
+    _worker_engine = TransportEngine(material=material,
+                                     max_energy_loss_fraction=max_energy_loss_fraction)
+
 def _transport_particle_worker(work_item):
     """
     Worker function for parallel particle transport.
 
-    This is a module-level function so it can be pickled by multiprocessing.
+    Uses a global engine instance created once per worker process
+    to avoid repeatedly loading NIST data.
 
     Parameters:
-        work_item: Dictionary with particle state and engine parameters
+        work_item: Dictionary with particle state
 
     Returns:
         Tuple of (final_particle, dose_contributions)
     """
+    global _worker_engine
+
     # Extract parameters
     particle_id = work_item['particle_id']
     max_depth = work_item['max_depth']
-    material = work_item['material']
-    density = work_item['density']
-    X0 = work_item['X0']
-    max_energy_loss_fraction = work_item['max_energy_loss_fraction']
-
-    # Create a local engine instance for this process
-    # Each process gets its own stopping power data
-    engine = TransportEngine(material=material,
-                            max_energy_loss_fraction=max_energy_loss_fraction)
 
     # Create initial state
     initial_state = {
@@ -341,8 +344,8 @@ def _transport_particle_worker(work_item):
         'weight': work_item['weight']
     }
 
-    # Transport this particle
-    return engine._transport_single_particle(particle_id, initial_state, max_depth)
+    # Transport this particle using the shared engine
+    return _worker_engine._transport_single_particle(particle_id, initial_state, max_depth)
 
 
 class TransportEngine:
@@ -766,7 +769,8 @@ class TransportEngine:
         # Parallel execution
         start_time = time.time()
 
-        with mp.Pool(n_processes) as pool:
+        with mp.Pool(n_processes, initializer=_init_worker,
+                     initargs=(self.material, self.max_energy_loss_fraction)) as pool:
             results = pool.map(_transport_particle_worker, work_items)
 
         elapsed = time.time() - start_time
