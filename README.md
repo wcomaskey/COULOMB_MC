@@ -44,7 +44,7 @@ Originally developed in Fortran for radiation therapy and space radiation applic
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/COULOMB_LET.git
+git clone https://github.com/wcomaskey/COULOMB_LET.git
 cd COULOMB_LET
 
 # Install with conda (recommended)
@@ -214,7 +214,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
   title = {COULOMB\_LET: Monte Carlo Heavy-Ion Transport Code},
   author = {Comaskey, William},
   year = {2025},
-  url = {https://github.com/YOUR_USERNAME/COULOMB_LET}
+  url = {https://github.com/wcomaskey/COULOMB_LET}
 }
 ```
 
@@ -232,4 +232,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ## Contact
 
-William Comaskey - GitHub: [@YOUR_USERNAME](https://github.com/YOUR_USERNAME)
+William Comaskey - GitHub: [@wcomaskey](https://github.com/wcomaskey)
