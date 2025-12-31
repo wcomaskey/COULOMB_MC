@@ -787,8 +787,10 @@ class TransportEngine:
         for i, (final_particle, _) in enumerate(results):
             beam.particles[i] = final_particle[0]
 
+        # Calculate rate
+        rate = n_particles / elapsed
+
         if verbose:
-            rate = n_particles / elapsed
             print(f"\nTransport complete:")
             print(f"  Time: {elapsed:.1f}s")
             print(f"  Rate: {rate:.0f} particles/sec")
