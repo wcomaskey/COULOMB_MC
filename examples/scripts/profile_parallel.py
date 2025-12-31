@@ -9,44 +9,33 @@ import pstats
 from io import StringIO
 from coulomb_mc.transport.engine import TransportEngine
 
-def profile_single_particle():
-    """Profile single particle transport in detail."""
+def profile_serial_transport():
+    """Profile serial transport in detail."""
     print("\n" + "="*70)
-    print("PROFILING SINGLE PARTICLE TRANSPORT")
+    print("PROFILING SERIAL TRANSPORT (VECTORIZED)")
     print("="*70)
 
     # Create engine first
     engine = TransportEngine(material='water')
 
-    # Create single particle beam
-    beam = engine.create_beam('C-12', 400.0, n_particles=1)
+    # Create beam with 100 particles
+    beam = engine.create_beam('C-12', 400.0, n_particles=100)
 
-    # Time single particle transport with profiling
-    print("\n1. Single particle transport:")
+    # Time serial transport with profiling
+    print("\n1. Serial transport (100 particles):")
 
     profiler = cProfile.Profile()
     profiler.enable()
     start = time.time()
 
-    result = engine._transport_single_particle(
-        0,
-        {
-            'position': beam.particles['position'][0],
-            'direction': beam.particles['direction'][0],
-            'energy': beam.particles['energy'][0],
-            'A': beam.particles['A'][0],
-            'Z': beam.particles['Z'][0],
-            'weight': beam.particles['weight'][0]
-        },
-        50.0
-    )
+    stats = engine.transport(beam, max_depth=50.0, verbose=False)
 
     elapsed = time.time() - start
     profiler.disable()
 
-    particle, dose_list = result
     print(f"   Time: {elapsed:.6f}s")
-    print(f"   Steps: {len(dose_list)}")
+    print(f"   Steps: {stats['n_steps']}")
+    print(f"   Steps/particle: {stats['n_steps']/100:.1f}")
 
     # Show top time consumers
     print("\n   Top function calls:")
@@ -81,16 +70,17 @@ def profile_parallel_overhead():
     parallel_time = time.time() - start
 
     print(f"\n   Total time: {parallel_time:.3f}s")
-    print(f"   Steps: {stats_parallel['total_steps']}")
+    print(f"   Steps: {stats_parallel['n_steps']}")
     print(f"   Speedup: {serial_time/parallel_time:.2f}x")
+    print(f"   Efficiency: {(serial_time/parallel_time)/4*100:.1f}%")
 
-def check_data_loading():
-    """Check if NIST data is being loaded multiple times."""
+def check_chunk_worker():
+    """Check chunk-based worker function."""
     print("\n" + "="*70)
-    print("CHECKING NIST DATA LOADING")
+    print("CHECKING CHUNK-BASED WORKER")
     print("="*70)
 
-    from coulomb_mc.transport.engine import _worker_engine, _init_worker, _transport_particle_worker
+    from coulomb_mc.transport.engine import _worker_engine, _init_worker, _transport_chunk_worker
 
     print("\n1. Testing worker initialization:")
     print("   Calling _init_worker...")
@@ -98,37 +88,36 @@ def check_data_loading():
     _init_worker('water', 0.05)
     elapsed = time.time() - start
     print(f"   Time: {elapsed:.6f}s")
-    print(f"   Global engine created: {_worker_engine is not None}")
 
-    if _worker_engine is not None:
-        print(f"   Engine material: {_worker_engine.material}")
-        print(f"   Stopping power object: {_worker_engine.stopping_power}")
+    # Note: _worker_engine will be None here because it's set in worker processes
+    # This is expected behavior for multiprocessing globals
+    print(f"   Note: Global engine in main process: {_worker_engine}")
+    print(f"   (Worker engines are created in separate processes)")
 
-        # Check if stopping power data is loaded
-        sp = _worker_engine.stopping_power
-        print(f"   Data loaded: {hasattr(sp, 'energies_MeV_u')}")
-        if hasattr(sp, 'energies_MeV_u'):
-            print(f"   Energy points: {len(sp.energies_MeV_u) if sp.energies_MeV_u is not None else 'None'}")
+    print("\n2. Testing chunk worker function:")
+    # Create a small chunk of particles
+    engine = TransportEngine(material='water')
+    beam = engine.create_beam('C-12', 400.0, n_particles=10)
 
-    print("\n2. Testing worker function:")
     work_item = {
-        'particle_id': 0,
-        'position': np.array([0., 0., 0.]),
-        'direction': np.array([0., 0., 1.]),
-        'energy': 400.0,
-        'A': 12,
-        'Z': 6,
-        'weight': 1.0,
-        'max_depth': 50.0
+        'particle_data': beam.particles.copy(),
+        'max_depth': 50.0,
+        'n_bins': 500,
+        'dose_bins': np.linspace(0, 50, 501)
     }
 
-    print("   Transporting particle using global engine...")
+    # Initialize worker in main process for testing
+    _init_worker('water', 0.05)
+
+    print("   Transporting 10-particle chunk using chunk worker...")
     start = time.time()
-    result = _transport_particle_worker(work_item)
+    result = _transport_chunk_worker(work_item)
     elapsed = time.time() - start
-    particle, dose_list = result
+
     print(f"   Time: {elapsed:.6f}s")
-    print(f"   Steps: {len(dose_list)}")
+    print(f"   Steps: {result['n_steps']}")
+    print(f"   Final states: {len(result['final_states'])} particles")
+    print(f"   Dose array shape: {result['dose_deposit'].shape}")
 
 def profile_stopping_power():
     """Profile stopping power calculations."""
@@ -164,6 +153,6 @@ def profile_stopping_power():
 
 if __name__ == '__main__':
     profile_stopping_power()
-    check_data_loading()
-    profile_single_particle()
+    check_chunk_worker()
+    profile_serial_transport()
     profile_parallel_overhead()
