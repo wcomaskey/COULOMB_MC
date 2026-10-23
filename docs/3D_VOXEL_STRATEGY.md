@@ -1,5 +1,7 @@
 # 3D Voxel Scoring Strategy
 
+> **Note (2026-10-23):** The particle-occupancy figures in this document (for example the fraction of particles reaching the central voxel) were computed with the scattering step as it was before the 2026-10-23 fix. In that version every track drifted about 3.6 cm in -x and emptied the on-axis voxels. The figures need to be recomputed.
+
 ## Executive Summary
 
 **Problem:** In 3D Monte Carlo, only ~0.035% of particles hit the central voxel due to lateral scattering. With 10,000 particles, you get 3.5 particles per central voxel (53% noise) - completely unusable.

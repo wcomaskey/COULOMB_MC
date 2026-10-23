@@ -1,4 +1,4 @@
-# Contributing to COULOMB_LET
+# Contributing to COULOMB_MC
 
 Guidelines for contributing to the project.
 
@@ -10,8 +10,8 @@ Guidelines for contributing to the project.
 
 ```bash
 # Fork the repository on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/COULOMB_LET.git
-cd COULOMB_LET
+git clone https://github.com/<your-username>/COULOMB_MC.git
+cd COULOMB_MC
 ```
 
 ### 2. Set Up Development Environment
@@ -28,12 +28,15 @@ pip install -e .
 ### 3. Run Tests
 
 ```bash
-# Run validation tests
-python examples/scripts/test_week1.py
-python examples/scripts/test_week2.py
+# Run unit tests
+python -m pytest tests/unit -q
 
-# Run unit tests (when available)
-pytest tests/
+# Clear the Numba caches before a validation run. Numba's on-disk cache does
+# not invalidate a caller when a jitted function it calls in another file changes.
+find coulomb_mc -name __pycache__ -type d -prune -exec rm -rf {} +
+
+# Run the Bragg-peak validation
+python examples/scripts/bragg_validation.py --n 10000 --seed 12345
 ```
 
 ---
@@ -42,16 +45,18 @@ pytest tests/
 
 ### Branch Strategy
 
-- `main` - Stable release branch
-- `develop` - Integration branch for new features
-- `feature/*` - Feature development branches
-- `bugfix/*` - Bug fix branches
+- `main` - The only long-lived branch
+- `feature/*` - New features, branched off `main`
+- `fix/*` - Bug fixes, branched off `main`
+
+Changes reach `main` through a pull request. There is no `develop` branch.
 
 ### Making Changes
 
-1. **Create a feature branch:**
+1. **Create a feature or fix branch off `main`:**
    ```bash
-   git checkout -b feature/your-feature-name
+   git checkout main
+   git checkout -b feature/your-feature-name   # or fix/your-fix-name
    ```
 
 2. **Make your changes:**
@@ -62,7 +67,7 @@ pytest tests/
 
 3. **Test your changes:**
    ```bash
-   python examples/scripts/test_week2.py
+   python -m pytest tests/unit -q
    # Ensure all tests pass
    ```
 
@@ -75,7 +80,7 @@ pytest tests/
 5. **Push and create PR:**
    ```bash
    git push origin feature/your-feature-name
-   # Then create Pull Request on GitHub
+   # Then open a Pull Request to main on GitHub
    ```
 
 ---
@@ -215,7 +220,7 @@ def calculate_stopping_power(energy: float, material: str) -> float:
 1. - All tests pass
 2. - Code follows style guide
 3. - Documentation updated
-4. - No merge conflicts with `develop`
+4. - No merge conflicts with `main`
 5. - Commits are clean and well-described
 
 ### PR Template
@@ -233,7 +238,7 @@ Brief description of changes
 
 ## Testing
 - [ ] Unit tests added/updated
-- [ ] Integration tests pass
+- [ ] Unit tests pass
 - [ ] Validation tests pass
 
 ## Performance Impact
@@ -270,7 +275,7 @@ Brief description of changes
 
 ### Required Validation
 1. **Range tests:** <3% error vs. NIST
-2. **Stopping power:** Match PSTAR/ASTAR within uncertainties
+2. **Stopping power:** Match PSTAR within uncertainties
 3. **Scattering:** Compare angular distributions to theory
 4. **Bragg peak:** Position and width within 5%
 

@@ -1,5 +1,7 @@
 # Parallelization Implementation - COMPLETE ✓
 
+> **Note (2026-10-23):** The figures in this document were measured before the 2026-10-23 scattering fix. Serial and parallel runs used the same kernel, so the serial-versus-parallel comparisons still hold.
+
 ## Objective
 
 Implement particle-level parallelization to achieve 6-8x speedup on multi-core systems, enabling rapid prototyping and 3D simulations.

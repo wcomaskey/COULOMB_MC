@@ -1,5 +1,7 @@
 # Parallelization Profiling Results
 
+> **Note (2026-10-23):** The figures in this document were measured before the 2026-10-23 scattering fix. Serial and parallel runs used the same kernel, so the serial-versus-parallel comparisons still hold.
+
 ## Executive Summary
 
 **Finding:** Current Numba `parallel=True` implementation is **3.6x SLOWER** than serial execution.

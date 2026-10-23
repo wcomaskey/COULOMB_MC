@@ -13,8 +13,8 @@ class StoppingPower:
     """
     Stopping power and range calculations for ions in matter.
 
-    Uses NIST PSTAR/ASTAR data for protons and alpha particles,
-    with Barkas effective charge scaling for heavy ions.
+    Uses NIST PSTAR proton data, with Barkas effective charge scaling for
+    heavier ions. The helium table is shipped in data/nist but never loaded.
 
     References:
         - NIST PSTAR: https://physics.nist.gov/PhysRefData/Star/Text/PSTAR.html
