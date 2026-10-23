@@ -137,7 +137,10 @@ class ParticleArray:
             'Si-28': (28, 14),
             'Fe-56': (56, 26),
         }
-        return particles.get(particle_type, (12, 6))  # Default C-12
+        if particle_type not in particles:
+            raise ValueError(f"Unknown particle type '{particle_type}'. "
+                             f"Available: {list(particles.keys())}")
+        return particles[particle_type]
 
     @property
     def n_alive(self) -> int:

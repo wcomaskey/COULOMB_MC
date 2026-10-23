@@ -1,8 +1,8 @@
 """
 Multiple Coulomb scattering calculations.
 
-Implements Highland/Molière theory for small-angle scattering
-in amorphous materials.
+Multiple Coulomb scattering by Gaussian sampling with the Highland width.
+moliere_angle_detailed is a placeholder that returns the Highland value.
 
 Ported from COULOMB_LET.f90 lines 415-481 and 636-695.
 
@@ -82,6 +82,9 @@ def highland_angle(energy_MeV_u: float, Z_particle: float, A_particle: float,
         x = path length
         X0 = radiation length
 
+    The log argument here is ln(x/X0). PDG RPP 2024 Eq. 34.16 uses
+    ln(x z²/(X0 β²)).
+
     Parameters:
         energy_MeV_u: Kinetic energy per nucleon [MeV/u]
         Z_particle: Atomic number of incident particle
@@ -133,9 +136,9 @@ def highland_angle(energy_MeV_u: float, Z_particle: float, A_particle: float,
 def moliere_angle_detailed(energy_MeV_u: float, Z_particle: float, A_particle: float,
                            step_length_cm: float, X0_cm: float, Z_target: float) -> float:
     """
-    Calculate RMS scattering angle using full Molière theory.
+    Placeholder for an RMS scattering angle from full Molière theory.
 
-    More accurate than Highland for extreme cases, but slower.
+    Not implemented: it currently returns the Highland value.
 
     Molière's formula includes:
         - Screening parameter (χ_a)
@@ -161,7 +164,7 @@ def moliere_angle_detailed(energy_MeV_u: float, Z_particle: float, A_particle: f
 @numba.njit(fastmath=True, cache=True)
 def sample_scattering_angle(theta_rms: float) -> Tuple[float, float]:
     """
-    Sample scattering angles from Gaussian distribution.
+    Sample scattering angles for one step of multiple Coulomb scattering.
 
     Ported from COULOMB_LET.f90:636-695 (scatter_particle)
 
@@ -169,25 +172,88 @@ def sample_scattering_angle(theta_rms: float) -> Tuple[float, float]:
     for small angles (θ << 1 radian), which is valid for most
     radiation transport scenarios.
 
+    theta_rms is the Highland width, which is the rms of the angle
+    projected on one plane (PDG: θ0 = θ_plane^rms = θ_space^rms / √2).
+    The two projected angles are independent Gaussians of width θ0, so the
+    polar angle θ = sqrt(θx² + θy²) is Rayleigh distributed and the
+    azimuth φ is uniform.
+
     Parameters:
-        theta_rms: RMS scattering angle [radians]
+        theta_rms: Projected (plane) RMS scattering angle θ0 [radians]
 
     Returns:
         (theta, phi): Polar and azimuthal scattering angles [radians]
-            theta: Scattering angle (0 to π)
+            theta: Scattering angle, theta >= 0, Rayleigh distributed
             phi: Azimuthal angle (0 to 2π)
 
     Notes:
         - For large-angle scattering, use nuclear elastic scattering models
         - Gaussian approximation breaks down for θ > 0.5 radians
     """
-    # Sample from Gaussian distribution
-    theta = np.abs(np.random.normal(0.0, theta_rms))
-
-    # Uniform azimuthal angle
-    phi = np.random.uniform(0.0, 2.0 * np.pi)
+    theta_x = np.random.normal(0.0, theta_rms)
+    theta_y = np.random.normal(0.0, theta_rms)
+    theta = np.sqrt(theta_x * theta_x + theta_y * theta_y)
+    phi = np.arctan2(theta_y, theta_x) % (2.0 * np.pi)
 
     return theta, phi
+
+
+@numba.njit(fastmath=True, cache=True)
+def scatter_direction(dx: float, dy: float, dz: float,
+                      theta_rms: float) -> Tuple[float, float, float]:
+    """
+    Deflect a unit direction by one multiple-scattering step.
+
+    Samples two independent projected angles θx, θy ~ N(0, θ0) (see
+    sample_scattering_angle) and applies them in an orthonormal frame
+    (u, v) perpendicular to the current direction d:
+
+        d' = cos θ d + sin θ (cos φ u + sin φ v),  θ = sqrt(θx² + θy²)
+
+    where cos φ = θx / θ and sin φ = θy / θ. The frame is built from the
+    lab axis least aligned with d, so it is well defined for any d.
+
+    Parameters:
+        dx, dy, dz: Current unit direction
+        theta_rms: Projected (plane) RMS scattering angle θ0 [radians]
+
+    Returns:
+        New unit direction (dx, dy, dz)
+    """
+    theta_x = np.random.normal(0.0, theta_rms)
+    theta_y = np.random.normal(0.0, theta_rms)
+    theta = np.sqrt(theta_x * theta_x + theta_y * theta_y)
+    if theta < 1e-15:
+        return dx, dy, dz
+
+    # u = normalize(a × d), with a the lab axis least aligned with d
+    if np.abs(dz) < 0.9:
+        # a = z
+        ux, uy, uz = -dy, dx, 0.0
+    else:
+        # a = x
+        ux, uy, uz = 0.0, -dz, dy
+    u_norm = np.sqrt(ux * ux + uy * uy + uz * uz)
+    ux /= u_norm
+    uy /= u_norm
+    uz /= u_norm
+
+    # v = d × u completes the right-handed frame (d, u, v)
+    vx = dy * uz - dz * uy
+    vy = dz * ux - dx * uz
+    vz = dx * uy - dy * ux
+
+    cos_phi = theta_x / theta
+    sin_phi = theta_y / theta
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+
+    nx = cos_theta * dx + sin_theta * (cos_phi * ux + sin_phi * vx)
+    ny = cos_theta * dy + sin_theta * (cos_phi * uy + sin_phi * vy)
+    nz = cos_theta * dz + sin_theta * (cos_phi * uz + sin_phi * vz)
+
+    norm = np.sqrt(nx * nx + ny * ny + nz * nz)
+    return nx / norm, ny / norm, nz / norm
 
 
 @numba.njit(fastmath=True, cache=True)
@@ -195,10 +261,9 @@ def rotate_direction(direction: np.ndarray, theta: float, phi: float) -> np.ndar
     """
     Rotate direction vector by scattering angles (theta, phi).
 
-    Uses Rodrigues' rotation formula:
-        v_rot = v*cos(θ) + (k × v)*sin(θ) + k*(k·v)*(1-cos(θ))
+        u' = cos θ u + sin θ (cos φ p + sin φ q)
 
-    where k is the rotation axis perpendicular to v.
+    where (p, q) is an orthonormal pair perpendicular to u.
 
     Parameters:
         direction: Initial direction unit vector [x, y, z]
@@ -209,9 +274,8 @@ def rotate_direction(direction: np.ndarray, theta: float, phi: float) -> np.ndar
         Rotated direction unit vector [x, y, z]
 
     Algorithm:
-        1. Find perpendicular axis in x-y plane
-        2. Rotate by phi around original direction
-        3. Rotate by theta around perpendicular axis
+        1. Build p, q perpendicular to u from the lab axis least aligned with u
+        2. Tilt u by theta toward the direction at azimuth phi in the (p, q) plane
     """
     # Current direction (assumed normalized)
     ux, uy, uz = direction[0], direction[1], direction[2]
@@ -220,42 +284,29 @@ def rotate_direction(direction: np.ndarray, theta: float, phi: float) -> np.ndar
     if theta < 1e-10:
         return direction.copy()
 
-    # Create perpendicular axis for rotation
-    # If uz ≈ ±1, use different perpendicular
-    if abs(uz) > 0.99:
-        # Direction nearly along z-axis
-        perp_x = 1.0
-        perp_y = 0.0
-        perp_z = 0.0
+    # Orthonormal frame (u, p, q) with p, q perpendicular to u, built from
+    # the lab axis least aligned with u (same frame as scatter_direction)
+    if abs(uz) < 0.9:
+        px, py, pz = -uy, ux, 0.0
     else:
-        # Perpendicular in x-y plane
-        norm = np.sqrt(ux**2 + uy**2)
-        perp_x = -uy / norm
-        perp_y = ux / norm
-        perp_z = 0.0
+        px, py, pz = 0.0, -uz, uy
+    p_norm = np.sqrt(px**2 + py**2 + pz**2)
+    px /= p_norm
+    py /= p_norm
+    pz /= p_norm
+    qx = uy * pz - uz * py
+    qy = uz * px - ux * pz
+    qz = ux * py - uy * px
 
-    # Rotate perpendicular axis by phi around original direction
-    # This gives the scattering plane orientation
+    # Deflect by theta in the plane at azimuth phi
     cos_phi = np.cos(phi)
     sin_phi = np.sin(phi)
-
-    # Rotation matrix around direction vector
-    # Using compact form for rotation by phi
-    temp_x = perp_x * cos_phi + (uy * perp_z - uz * perp_y) * sin_phi
-    temp_y = perp_y * cos_phi + (uz * perp_x - ux * perp_z) * sin_phi
-    temp_z = perp_z * cos_phi + (ux * perp_y - uy * perp_x) * sin_phi
-
-    # Now rotate by theta around this new perpendicular axis
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
 
-    # Rodrigues' formula
-    new_x = ux * cos_theta + (temp_y * uz - temp_z * uy) * sin_theta + \
-            temp_x * (temp_x * ux + temp_y * uy + temp_z * uz) * (1.0 - cos_theta)
-    new_y = uy * cos_theta + (temp_z * ux - temp_x * uz) * sin_theta + \
-            temp_y * (temp_x * ux + temp_y * uy + temp_z * uz) * (1.0 - cos_theta)
-    new_z = uz * cos_theta + (temp_x * uy - temp_y * ux) * sin_theta + \
-            temp_z * (temp_x * ux + temp_y * uy + temp_z * uz) * (1.0 - cos_theta)
+    new_x = ux * cos_theta + sin_theta * (cos_phi * px + sin_phi * qx)
+    new_y = uy * cos_theta + sin_theta * (cos_phi * py + sin_phi * qy)
+    new_z = uz * cos_theta + sin_theta * (cos_phi * pz + sin_phi * qz)
 
     # Normalize (should be normalized already, but ensure numerical stability)
     norm = np.sqrt(new_x**2 + new_y**2 + new_z**2)
@@ -277,13 +328,17 @@ def scatter_particle(direction: np.ndarray, theta_rms: float) -> np.ndarray:
 
     Parameters:
         direction: Initial direction unit vector [x, y, z]
-        theta_rms: RMS scattering angle [radians]
+        theta_rms: Projected (plane) RMS scattering angle θ0 [radians]
 
     Returns:
         New direction unit vector [x, y, z]
     """
-    theta, phi = sample_scattering_angle(theta_rms)
-    return rotate_direction(direction, theta, phi)
+    nx, ny, nz = scatter_direction(direction[0], direction[1], direction[2], theta_rms)
+    result = np.empty(3, dtype=np.float64)
+    result[0] = nx
+    result[1] = ny
+    result[2] = nz
+    return result
 
 
 class MultipleScattering:
@@ -396,23 +451,23 @@ if __name__ == "__main__":
 
         final_directions[i] = direction
 
-    # Calculate angular spread
-    angles = np.arccos(np.clip(final_directions[:, 2], -1.0, 1.0))
-    mean_angle = np.mean(angles)
-    rms_angle = np.sqrt(np.mean(angles**2))
+    # Projected (plane) angular spread, the quantity Highland's θ0 describes
+    theta_x = np.arctan2(final_directions[:, 0], final_directions[:, 2])
+    theta_y = np.arctan2(final_directions[:, 1], final_directions[:, 2])
+    rms_plane = 0.5 * (np.std(theta_x) + np.std(theta_y))
 
-    print(f"  Mean deflection: {mean_angle*1000:.2f} mrad")
-    print(f"  RMS deflection: {rms_angle*1000:.2f} mrad")
+    print(f"  Projected RMS (x, y): {np.std(theta_x)*1000:.2f}, {np.std(theta_y)*1000:.2f} mrad")
 
-    # Theoretical prediction
+    # Highland for the full path, and the per-step widths added in quadrature
     total_length = n_steps * step
     X0 = ms.get_radiation_length()
+    theta_full = highland_angle(energy, Z, A, total_length, X0)
+    theta_steps = np.sqrt(n_steps) * highland_angle(energy, Z, A, step, X0)
 
-    # Highland formula for total path
-    theta_theory = highland_angle(energy, Z, A, total_length, X0)
-
-    print(f"  Theoretical RMS: {theta_theory*1000:.2f} mrad")
-    print(f"  Agreement: {(rms_angle/theta_theory - 1.0)*100:.1f}% difference")
+    print(f"  Highland, full path: {theta_full*1000:.2f} mrad")
+    print(f"  Highland, per step in quadrature: {theta_steps*1000:.2f} mrad "
+          f"({(theta_steps/theta_full - 1.0)*100:.1f}% vs full path)")
+    print(f"  Sampled vs per-step expectation: {(rms_plane/theta_steps - 1.0)*100:.1f}% difference")
 
     # Test with different materials
     print(f"\nRMS angles for 0.1 cm step in different materials:")

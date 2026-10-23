@@ -10,10 +10,11 @@ This example validates:
     - Range calculations
     - Dose scoring accuracy
 
-Expected results for C-12 @ 400 MeV/u in water:
-    - Range: ~26.4 cm (ICRU Report 73)
-    - Peak-to-entrance ratio: ~3-4
-    - Peak width: ~1-2 cm
+Reference CSDA ranges in liquid water (g/cm²; the code uses 1.0 g/cm³):
+    - C-12 @ 400 MeV/u: 27.5 (ICRU Report 90, Table A.15, power-law
+      interpolation between the 4000 and 5000 MeV rows)
+    - proton @ 200 MeV: 25.96 (NIST PSTAR)
+The code has no range straggling, so its peaks are sharper than measured ones.
 """
 
 import numpy as np
@@ -117,7 +118,7 @@ def plot_bragg_peak(depth, dose, particle_type, energy_MeV_u,
     # Mark expected range if provided
     if expected_range is not None:
         plt.axvline(expected_range, color='g', linestyle=':', linewidth=1.5,
-                   alpha=0.7, label=f'ICRU: {expected_range:.1f} cm')
+                   alpha=0.7, label=f'Reference: {expected_range:.2f} cm')
 
         # Show difference
         diff = abs(peak_depth - expected_range)
@@ -205,17 +206,18 @@ def validate_range():
     Tests multiple ions and energies.
     """
     print(f"\n{'='*70}")
-    print(f"Range Validation vs ICRU Report 73")
+    print(f"Range Validation vs NIST PSTAR, ICRU 90 and ICRU 73")
     print(f"{'='*70}\n")
 
-    # Test cases: (particle, energy [MeV/u], expected_range [cm])
+    # Test cases: (particle, energy [MeV/u], expected CSDA range [g/cm²])
+    # The code's water density is 1.0 g/cm³, so its depths in cm are g/cm².
     test_cases = [
-        ('proton', 200, 25.9),   # NIST PSTAR
-        ('proton', 100, 7.72),
-        ('He-4', 400, 27.8),     # NIST ASTAR
-        ('C-12', 400, 26.4),     # ICRU Report 73
-        ('C-12', 290, 13.1),
-        ('O-16', 400, 23.0),
+        ('proton', 200, 25.96),  # NIST PSTAR
+        ('proton', 100, 7.718),  # NIST PSTAR
+        ('He-4', 250, 38.30),    # ICRU Report 90, Table A.12 (1000 MeV)
+        ('C-12', 400, 27.5),     # ICRU Report 90, Table A.15, interpolated
+        ('C-12', 290, 16.3),     # ICRU Report 90, Table A.15, interpolated
+        ('O-16', 400, 20.6),     # ICRU Report 73 revised water data, integrated
     ]
 
     results = []
@@ -281,7 +283,7 @@ if __name__ == "__main__":
 
     fig = plot_bragg_peak(
         depth, dose, 'C-12', 400.0, peak_depth,
-        expected_range=26.4,  # ICRU Report 73
+        expected_range=27.5,  # ICRU Report 90, Table A.15, interpolated
         save_path='bragg_peak_C12_400MeV.png'
     )
     plt.show()
@@ -297,7 +299,7 @@ if __name__ == "__main__":
 
     fig_p = plot_bragg_peak(
         depth_p, dose_p, 'Proton', 200.0, peak_p,
-        expected_range=25.9,  # NIST PSTAR
+        expected_range=25.96,  # NIST PSTAR
         save_path='bragg_peak_proton_200MeV.png'
     )
     plt.show()

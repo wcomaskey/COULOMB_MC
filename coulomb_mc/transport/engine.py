@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 from pathlib import Path
 
 from coulomb_mc.physics.stopping_power import StoppingPower
-from coulomb_mc.physics.scattering import MultipleScattering, highland_angle
+from coulomb_mc.physics.scattering import MultipleScattering, highland_angle, scatter_direction
 from coulomb_mc.core.particle import ParticleArray, PARTICLE_DTYPE
 
 
@@ -52,67 +52,17 @@ def transport_step_with_scattering_adaptive(particles: np.ndarray, step_lengths:
             if particles['energy'][i] < 0.1:  # 0.1 MeV/u cutoff
                 particles['alive'][i] = False
             else:
-                # Apply scattering (inlined from scatter_particle to avoid nested JIT)
-                if theta_rms[i] > 1e-10:  # Only scatter if angle is significant
-                    # Sample scattering angle from Gaussian
-                    theta = np.abs(np.random.normal(0.0, theta_rms[i]))
-                    phi = np.random.uniform(0.0, 2.0 * np.pi)
-
-                    # Rotate direction using Rodrigues formula
-                    # Get current direction
-                    dx = particles['direction'][i, 0]
-                    dy = particles['direction'][i, 1]
-                    dz = particles['direction'][i, 2]
-
-                    # Create rotation axis perpendicular to direction
-                    # Using (0,0,1) as reference unless direction is already along z
-                    if np.abs(dz) < 0.9:
-                        # Use z-axis as reference
-                        kx = -dy
-                        ky = dx
-                        kz = 0.0
-                    else:
-                        # Use x-axis as reference
-                        kx = 0.0
-                        ky = -dz
-                        kz = dy
-
-                    # Normalize rotation axis
-                    k_norm = np.sqrt(kx*kx + ky*ky + kz*kz)
-                    if k_norm > 1e-10:
-                        kx /= k_norm
-                        ky /= k_norm
-                        kz /= k_norm
-
-                        # Rotate axis by azimuthal angle phi
-                        cos_phi = np.cos(phi)
-                        sin_phi = np.sin(phi)
-
-                        # Apply polar rotation by theta using Rodrigues formula
-                        cos_theta = np.cos(theta)
-                        sin_theta = np.sin(theta)
-
-                        # v_rot = v*cos(θ) + (k × v)*sin(θ) + k*(k·v)*(1-cos(θ))
-                        # Cross product: k × v
-                        cross_x = ky * dz - kz * dy
-                        cross_y = kz * dx - kx * dz
-                        cross_z = kx * dy - ky * dx
-
-                        # Dot product: k · v
-                        dot = kx * dx + ky * dy + kz * dz
-
-                        # Rodrigues formula
-                        one_minus_cos = 1.0 - cos_theta
-                        new_dx = dx * cos_theta + cross_x * sin_theta + kx * dot * one_minus_cos
-                        new_dy = dy * cos_theta + cross_y * sin_theta + ky * dot * one_minus_cos
-                        new_dz = dz * cos_theta + cross_z * sin_theta + kz * dot * one_minus_cos
-
-                        # Normalize (important for numerical stability)
-                        norm = np.sqrt(new_dx*new_dx + new_dy*new_dy + new_dz*new_dz)
-                        if norm > 1e-10:
-                            particles['direction'][i, 0] = new_dx / norm
-                            particles['direction'][i, 1] = new_dy / norm
-                            particles['direction'][i, 2] = new_dz / norm
+                # Multiple Coulomb scattering: two independent projected angles of
+                # width theta_rms, applied in a frame perpendicular to the direction
+                if theta_rms[i] > 1e-10:
+                    nx, ny, nz = scatter_direction(
+                        particles['direction'][i, 0],
+                        particles['direction'][i, 1],
+                        particles['direction'][i, 2],
+                        theta_rms[i])
+                    particles['direction'][i, 0] = nx
+                    particles['direction'][i, 1] = ny
+                    particles['direction'][i, 2] = nz
 
 
 @numba.njit(fastmath=True, cache=True)  # Removed parallel=True - causes 3.6x slowdown!
@@ -132,7 +82,8 @@ def transport_step_with_scattering(particles: np.ndarray, step_length: float,
 
     Modifies particles in-place.
 
-    Note: Scattering logic is inlined here to avoid Numba nested JIT issues.
+    Note: Scattering is done by scatter_direction (coulomb_mc/physics/scattering.py),
+    which both transport kernels in this file call.
     """
     for i in range(len(particles)):  # Changed from numba.prange
         if particles['alive'][i]:
@@ -148,71 +99,17 @@ def transport_step_with_scattering(particles: np.ndarray, step_length: float,
             if particles['energy'][i] < 0.1:  # 0.1 MeV/u cutoff
                 particles['alive'][i] = False
             else:
-                # Apply scattering (inlined from scatter_particle to avoid nested JIT)
-                if theta_rms[i] > 1e-10:  # Only scatter if angle is significant
-                    # Sample scattering angle from Gaussian
-                    theta = np.abs(np.random.normal(0.0, theta_rms[i]))
-                    phi = np.random.uniform(0.0, 2.0 * np.pi)
-
-                    # Rotate direction using Rodrigues formula
-                    # Get current direction
-                    dx = particles['direction'][i, 0]
-                    dy = particles['direction'][i, 1]
-                    dz = particles['direction'][i, 2]
-
-                    # Create rotation axis perpendicular to direction
-                    # Using (0,0,1) as reference unless direction is already along z
-                    if np.abs(dz) < 0.9:
-                        # Use z-axis as reference
-                        kx = -dy
-                        ky = dx
-                        kz = 0.0
-                    else:
-                        # Use x-axis as reference
-                        kx = 0.0
-                        ky = -dz
-                        kz = dy
-
-                    # Normalize rotation axis
-                    k_norm = np.sqrt(kx*kx + ky*ky + kz*kz)
-                    if k_norm > 1e-10:
-                        kx /= k_norm
-                        ky /= k_norm
-                        kz /= k_norm
-
-                        # Rotate axis by azimuthal angle phi
-                        cos_phi = np.cos(phi)
-                        sin_phi = np.sin(phi)
-
-                        # Rotate k around direction vector by angle phi
-                        # This is a simplified version - full rotation would use matrix
-                        # For small angles this approximation is sufficient
-
-                        # Apply polar rotation by theta using Rodrigues formula
-                        cos_theta = np.cos(theta)
-                        sin_theta = np.sin(theta)
-
-                        # v_rot = v*cos(θ) + (k × v)*sin(θ) + k*(k·v)*(1-cos(θ))
-                        # Cross product: k × v
-                        cross_x = ky * dz - kz * dy
-                        cross_y = kz * dx - kx * dz
-                        cross_z = kx * dy - ky * dx
-
-                        # Dot product: k · v
-                        dot = kx * dx + ky * dy + kz * dz
-
-                        # Rodrigues formula
-                        one_minus_cos = 1.0 - cos_theta
-                        new_dx = dx * cos_theta + cross_x * sin_theta + kx * dot * one_minus_cos
-                        new_dy = dy * cos_theta + cross_y * sin_theta + ky * dot * one_minus_cos
-                        new_dz = dz * cos_theta + cross_z * sin_theta + kz * dot * one_minus_cos
-
-                        # Normalize (important for numerical stability)
-                        norm = np.sqrt(new_dx*new_dx + new_dy*new_dy + new_dz*new_dz)
-                        if norm > 1e-10:
-                            particles['direction'][i, 0] = new_dx / norm
-                            particles['direction'][i, 1] = new_dy / norm
-                            particles['direction'][i, 2] = new_dz / norm
+                # Multiple Coulomb scattering: two independent projected angles of
+                # width theta_rms, applied in a frame perpendicular to the direction
+                if theta_rms[i] > 1e-10:
+                    nx, ny, nz = scatter_direction(
+                        particles['direction'][i, 0],
+                        particles['direction'][i, 1],
+                        particles['direction'][i, 2],
+                        theta_rms[i])
+                    particles['direction'][i, 0] = nx
+                    particles['direction'][i, 1] = ny
+                    particles['direction'][i, 2] = nz
 
 
 @numba.njit(fastmath=True, cache=True)
@@ -592,15 +489,16 @@ class TransportEngine:
         """
         alive_mask = particles['alive']
 
-        # Get positions AFTER the step (current position)
-        z_after = particles['position'][alive_mask, 2]
+        # transport() scores before it advances the particles, so the current
+        # position is the START of the step
+        z_start = particles['position'][alive_mask, 2]
 
         # Get direction vectors and step lengths for alive particles
         directions = particles['direction'][alive_mask]
         steps = step_lengths[alive_mask]
 
         # Calculate position at MIDPOINT of step
-        z_mid = z_after - 0.5 * steps * directions[:, 2]
+        z_mid = z_start + 0.5 * steps * directions[:, 2]
 
         weights = particles['weight'][alive_mask]
         A_values = particles['A'][alive_mask]
